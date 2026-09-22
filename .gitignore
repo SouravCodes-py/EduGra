@@ -1,0 +1,128 @@
+# ================================
+# SECRETS & ENVIRONMENT
+# ================================
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# ================================
+# PYTHON
+# ================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+var/
+sdist/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+MANIFEST
+
+# ================================
+# VIRTUAL ENVIRONMENTS
+# ================================
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.Python
+
+# ================================
+# TESTING & COVERAGE
+# ================================
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+nosetests.xml
+*.cover
+*.log
+
+# ================================
+# TYPE CHECKING & LINTING
+# ================================
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.ruff_cache/
+.pytype/
+
+# ================================
+# JUPYTER NOTEBOOKS
+# ================================
+.ipynb_checkpoints
+*.ipynb_checkpoints/
+
+# ================================
+# IDEs & EDITORS
+# ================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+*.sublime-project
+*.sublime-workspace
+
+# ================================
+# OS FILES
+# ================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ================================
+# DATABASES & DATA FILES
+# ================================
+*.db
+*.sqlite
+*.sqlite3
+data/
+*.csv
+*.parquet
+*.pkl
+*.pickle
+
+# ================================
+# LOGS
+# ================================
+logs/
+*.log
+*.out
+
+# ================================
+# LANGCHAIN / AI CACHE
+# ================================
+.langchain.db
+langchain_cache/
+chroma_db/
+vectorstore/
+faiss_index/
+
+# ================================
+# MISC
+# ================================
+.cache/
+tmp/
+temp/
