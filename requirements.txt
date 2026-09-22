@@ -4,3 +4,5 @@ neo4j
 pymupdf
 litellm
 python-dotenv
+python-docx
+python-pptx
