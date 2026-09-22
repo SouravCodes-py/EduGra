@@ -4,21 +4,21 @@
 
 ## 1. Overview & Purpose
 
-The **Knowledge Extraction Agent (KEA)** serves as the ingestion gateway for GraphMASAL. It processes raw educational materials (PDFs, Word documents, PowerPoint presentations, Markdown, and plain text files) and converts unstructured text into a structured, semantic knowledge graph stored in **Neo4j**.
+The **Knowledge Extraction Agent (KEA)** serves as the ingestion gateway for EduGra. It processes raw educational materials (specifically PDFs initially) and converts unstructured text into a structured, semantic knowledge graph stored in **Neo4j**.
 
 Every downstream agent (Diagnostic, Planning, Student Modeling, Tutor) depends directly on the DAG (Directed Acyclic Graph) constructed by KEA.
 
 ---
 
-## 2. Unspecified Gaps ("Holes") in Initial Plan & Technical Resolutions
+## 2. Technical Stack & Architecture
 
-| Initial Plan Gap | Resolution & Actual Implementation Details |
-|---|---|
-| **Multi-format Document Ingestion** | Implemented a modular loader factory (`loader_factory.py`) with specialized document parsers (`pdf_loader.py` via PyMuPDF, `docx_loader.py`, `pptx_loader.py`, `txt_loader.py`, `markdown_loader.py`). |
-| **Single-pass LLM Failure** | Passing text to extract concepts, definitions, embeddings, and relationships in a single LLM prompt caused context overflow and hallucinated JSON. Resolved by engineering a **3-Step Decoupled Extraction Pipeline**. |
-| **Malformed JSON & Markdown Wrappers** | LLMs wrap JSON responses in markdown fences (````json ... ````). Built a regex sanitizer (`_clean_json`) and Pydantic schemas (`models.py`) to enforce strict type validation. |
-| **Vector Embedding Choice** | Selected Google `models/gemini-embedding-001` with `SEMANTIC_SIMILARITY` task type for batched concept vector generation. |
-| **Graph Merging vs Duplication** | Implemented Cypher `MERGE` statements on concept names to ensure uploading new files updates existing nodes rather than creating duplicate concepts. |
+- **Web Framework:** FastAPI (with Uvicorn)
+- **PDF Extraction:** PyMuPDF (`fitz`)
+- **LLM Routing:** LiteLLM (for model-agnostic completions and embeddings)
+- **Database:** Neo4j (managed via the official `neo4j` Python driver)
+- **Environment:** `python-dotenv` for managing credentials and API keys.
+
+*Note: The choice of specific LLM models (e.g., `gemini-2.5-flash` for text extraction, `BAAI/bge-small-en-v1.5` for embeddings) is dictated by the `.env` configuration, abstracted via LiteLLM.*
 
 ---
 
@@ -28,109 +28,85 @@ Every downstream agent (Diagnostic, Planning, Student Modeling, Tutor) depends d
 Upload File (POST /upload)
          │
          ▼
-[ Loader Factory ] ──▶ Extract Raw Text (PyMuPDF / docx / pptx)
+[ PDF Extractor ] ──▶ Extract Raw Text (PyMuPDF)
          │
          ▼
-[ Step 1: Concept Extraction ] ──▶ Gemini 2.5 Flash ──▶ Pydantic ConceptList
+[ LLM Extraction ] ──▶ LiteLLM (via configured KNOWLEDGE_EXTRACTION_MODEL) ──▶ JSON Concept Schema
          │
          ▼
-[ Step 2: Batched Embedding ] ──▶ gemini-embedding-001 ──▶ 3072-dim Float Vectors
+[ Vector Embedding ] ──▶ LiteLLM (via configured EMBEDDING_MODEL) ──▶ Float Vectors
          │
          ▼
-[ Step 3: Relationship Extraction ] ──▶ Gemini 2.5 Flash ──▶ PREREQUISITE_OF Edges
-         │
-         ▼
-[ Step 4: Neo4j Graph Persistence ] ──▶ Cypher MERGE ──▶ Knowledge Graph DAG
+[ Neo4j Graph Persistence ] ──▶ Cypher MERGE ──▶ Knowledge Graph DAG
 ```
 
 ---
 
 ## 4. Detailed Component Specifications
 
-### 4.1 Ingestion Layer (`backend/ingestion/`)
-* **`base_loader.py`**: Abstract base class defining `load(file_path: str) -> str`.
-* **`pdf_loader.py`**: Uses `fitz` (PyMuPDF) to extract text page-by-page, stripping page numbers and header artifacts.
-* **`docx_loader.py` / `pptx_loader.py`**: Parses paragraph blocks and slide shapes into ordered text strings.
+### 4.1 Folder Structure
+```
+app/
+├── agents/
+│   └── knowledge_extraction/
+│       ├── __init__.py
+│       ├── extractor.py       # PyMuPDF text extraction logic
+│       ├── llm_extract.py     # LiteLLM concept extraction prompt & parsing
+│       └── embeddings.py      # LiteLLM embedding generation
+├── graph/
+│   ├── __init__.py
+│   ├── connection.py          # Neo4j driver singleton
+│   └── graph_writer.py        # Cypher MERGE queries for concepts & relationships
+├── models/
+│   └── __init__.py
+├── routes/
+│   ├── __init__.py
+│   └── upload.py              # FastAPI POST /upload endpoint
+├── state/
+│   └── __init__.py
+└── main.py                    # FastAPI application entry point
+scripts/
+└── init_schema.py             # Script to initialize Neo4j constraints
+tests/
+└── fixtures/                  # Sample PDFs for standalone testing
+```
 
-### 4.2 LLM Extraction Engine (`backend/agents/knowledge_extraction/extraction_agent.py`)
+### 4.2 Ingestion Layer (`app/agents/knowledge_extraction/extractor.py`)
+* Uses `fitz` (PyMuPDF) to extract text page-by-page.
+* Extracts the raw string to be passed into the LLM context.
 
-#### Step 1 — Concept Extraction
-* **Model:** `gemini-2.5-flash` (`temperature=0.2`, `max_output_tokens=4096`)
-* **Prompt Strategy:** Enforces JSON-only output complying with Pydantic schema:
+### 4.3 LLM Extraction Engine (`app/agents/knowledge_extraction/llm_extract.py`)
+* **Prompt Strategy:** Enforces strict JSON-only output without markdown wrappers or preambles.
+* **Output Format:**
   ```json
   {
     "concepts": [
-      {
-        "id": "c1",
-        "name": "Chain Rule",
-        "description": "Rule for differentiating composite functions.",
-        "prerequisites": ["Derivatives", "Functions"]
-      }
+      {"name": "concept name", "definition": "one sentence definition", "prerequisites": ["concept name"]}
     ]
   }
   ```
 
-#### Step 2 — Batched Vector Embedding
-* **Model:** `models/gemini-embedding-001`
-* **Execution:** Collects all extracted concept names into a single list and calls `genai.embed_content()` in batch, assigning embedding vectors directly to `Concept.embedding`.
+### 4.4 Vector Embedding (`app/agents/knowledge_extraction/embeddings.py`)
+* Iterates through the extracted concept names and calls LiteLLM's `embedding()` function.
+* Returns a dictionary mapping concept names to their respective vector arrays.
 
-#### Step 3 — Prerequisite Relationship Extraction
-* **Model:** `gemini-2.5-flash` (`temperature=0.2`)
-* **Context Window:** Passes raw text alongside the list of extracted concept names and descriptions.
-* **Output:** Extracts directed directional dependencies:
-  ```json
-  {
-    "relationships": [
-      {
-        "source": "Chain Rule",
-        "target": "Integration",
-        "relationship_type": "PREREQUISITE_OF",
-        "weight": 1.0
-      }
-    ]
-  }
-  ```
-
-### 4.3 Database Storage & Graph Schema (`Neo4j`)
-* **Concept Nodes:**
-  ```cypher
-  MERGE (c:Concept {name: $name})
-  ON CREATE SET c.id = $id,
-                c.description = $description,
-                c.embedding = $embedding,
-                c.mastery_score = 0.2,
-                c.created_at = timestamp()
-  ```
-* **Prerequisite Edges:**
-  ```cypher
-  MATCH (a:Concept {name: $source})
-  MATCH (b:Concept {name: $target})
-  MERGE (a)-[r:PREREQUISITE_OF]->(b)
-  SET r.weight = $weight
-  ```
+### 4.5 Database Storage & Graph Schema (`Neo4j`)
+* **Constraints (via `scripts/init_schema.py`):**
+  - `CREATE CONSTRAINT concept_name_unique IF NOT EXISTS FOR (c:Concept) REQUIRE c.name IS UNIQUE`
+  - `CREATE CONSTRAINT student_id_unique IF NOT EXISTS FOR (s:Student) REQUIRE s.id IS UNIQUE`
+* **Concept Nodes & Prerequisite Edges (`app/graph/graph_writer.py`):**
+  - Uses `MERGE` on Concept names to prevent duplicates and updates properties (`definition`, `embedding`, `subject`, `created_at`).
+  - Uses `MERGE` to create `PREREQUISITE_OF` directional edges between prerequisite concepts and target concepts.
 
 ---
 
 ## 5. Input / Output Data Contracts
 
 * **Input:** Raw File Byte Stream (via `POST /upload`).
-* **Output:** Structured dictionary representation of `KnowledgeGraph`:
-  ```python
+* **Output:** JSON Response indicating status and number of concepts written.
+  ```json
   {
-      "concepts": [
-          {"id": str, "name": str, "description": str, "embedding": list[float]}
-      ],
-      "relationships": [
-          {"source": str, "target": str, "relationship_type": "PREREQUISITE_OF", "weight": float}
-      ]
+    "status": "ok", 
+    "concepts_written": 15
   }
   ```
-
----
-
-## 6. Implementation Reference Code Files
-
-* Agent Class: [`extraction_agent.py`](file:///c:/A%20ME%20STUFF/STUDIES/EXTRA/ML/SUMMER%20PROJECT%202026/graphmasal/backend/agents/knowledge_extraction/extraction_agent.py)
-* Data Models: [`models.py`](file:///c:/A%20ME%20STUFF/STUDIES/EXTRA/ML/SUMMER%20PROJECT%202026/graphmasal/backend/agents/knowledge_extraction/models.py)
-* Prompts: [`prompts.py`](file:///c:/A%20ME%20STUFF/STUDIES/EXTRA/ML/SUMMER%20PROJECT%202026/graphmasal/backend/agents/knowledge_extraction/prompts.py)
-* Ingestion Loaders: [`loader_factory.py`](file:///c:/A%20ME%20STUFF/STUDIES/EXTRA/ML/SUMMER%20PROJECT%202026/graphmasal/backend/ingestion/loader_factory.py)
