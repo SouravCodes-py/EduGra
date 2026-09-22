@@ -8,10 +8,10 @@ from app.agents.knowledge_extraction.embeddings import get_embedding
 from app.graph.graph_writer import write_concepts
 from app.graph.connection import get_driver
 
-def run_test():
-    print("=== Step 1: Extracting text from PDF ===")
-    text = extract_text("tests/fixtures/sample.pdf")
-    print(f"Extracted {len(text)} characters from sample.pdf")
+def run_test(file_path: str):
+    print(f"=== Step 1: Extracting text from {os.path.basename(file_path)} ===")
+    text = extract_text(file_path)
+    print(f"Extracted {len(text)} characters from {os.path.basename(file_path)}")
 
     print("\n=== Step 2: Extracting Concepts and Prerequisites via LLM ===")
     data = extract_concepts(text)
@@ -46,4 +46,9 @@ def run_test():
             print(f"  ({r['prereq']}) --[:PREREQUISITE_OF]--> ({r['concept']})")
 
 if __name__ == "__main__":
-    run_test()
+    if len(sys.argv) > 1:
+        run_test(sys.argv[1])
+    else:
+        print("Usage: python3 tests/test_pipeline.py <path_to_file>")
+        print("Example: python3 tests/test_pipeline.py tests/fixtures/sample.pdf")
+        sys.exit(1)
